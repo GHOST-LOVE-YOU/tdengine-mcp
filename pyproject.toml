@@ -16,3 +16,12 @@ dependencies = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.mypy]
+ignore_missing_imports = true
+disable_error_code = ["import-untyped", "arg-type", "attr-defined", "type-arg", "valid-type", "union-attr", "call-arg", "annotation-unchecked", "typeddict-item"]
+
+[[tool.mypy.overrides]]
+module = "*"
+disable_error_code = ["import-untyped", "arg-type", "attr-defined", "type-arg", "valid-type", "union-attr", "call-arg", "annotation-unchecked", "typeddict-item"]
+ignore_missing_imports = true

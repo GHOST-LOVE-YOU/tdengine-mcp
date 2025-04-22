@@ -18,12 +18,9 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.prompts.base import Message, UserMessage
 from pydantic import Field
 from taosrest import RestClient
-from template import get_prompt_template
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(module)s.%(funcName)s:%(lineno)d - | %(levelname)s | - %(message)s",
-)
+from .template import get_prompt_template
+
 logger = logging.getLogger(__name__)
 
 
@@ -95,9 +92,6 @@ class TAOSClient:
     def init_db(self) -> Generator[RestClient, None, None]:
         _url = f"http://{self.host}:{self.port}"
         try:
-            logger.info(
-                f"Connecting to taos db => url: {_url}, host: {self.host}, username: {self.username}, database: {self.database}"
-            )
             client = RestClient(
                 url=_url,
                 user=self.username,  # type: ignore
@@ -105,9 +99,7 @@ class TAOSClient:
                 database=self.database,  # type: ignore
                 timeout=self.timeout,  # type: ignore
             )
-            logger.info(
-                f"Successfully connected to taos db => url: {_url}, host: {self.host}, username: {self.username}, database: {self.database}"
-            )
+            logger.info("Have initialized the taos client.")
             yield client
         except Exception as e:
             logger.error(
@@ -121,17 +113,21 @@ class TAOSClient:
         logger.debug(f"Received TaosSQL statement: {sql_stmt}")
         validate_sql_stmt(sql_stmt)
 
-        result = self.client.sql(sql_stmt)
+        try:
+            result = self.client.sql(sql_stmt)
 
-        return TaosSqlResponse(
-            status=result.get("status", ""),
-            # https://docs.taosdata.com/2.6/reference/rest-api/#http-%E8%BF%94%E5%9B%9E%E6%A0%BC%E5%BC%8F
-            # head可能会在后续版本移除, 当前版本2还能使用, 官方推荐使用column_meta
-            head=result.get("head", []),
-            column_meta=result.get("column_meta", []),
-            data=result.get("data", []),
-            rows=result.get("rows", -1),
-        )
+            return TaosSqlResponse(
+                status=result.get("status", ""),
+                # https://docs.taosdata.com/2.6/reference/rest-api/#http-%E8%BF%94%E5%9B%9E%E6%A0%BC%E5%BC%8F
+                # head可能会在后续版本移除, 当前版本2还能使用, 官方推荐使用column_meta
+                head=result.get("head", []),
+                column_meta=result.get("column_meta", []),
+                data=result.get("data", []),
+                rows=result.get("rows", -1),
+            )
+        except Exception as e:
+            logger.error(f"Failed to execute SQL statement: {sql_stmt}")
+            raise e
 
 
 class TaosContext:
@@ -151,14 +147,6 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[TaosContext]:
         pass
 
 
-mcp_app = FastMCP(
-    name="[TDengine-MCP-Server]",
-    description="TDengine-MCP-Server",
-    lifespan=server_lifespan,
-    dependencies=["dotenv", "taosrest"],
-)
-
-
 def validate_sql_stmt(sql_stmt: str):
     """Check if the SQL statement is allowed."""
 
@@ -174,6 +162,7 @@ def validate_sql_stmt(sql_stmt: str):
 def get_taos_config(args: argparse.Namespace) -> TaosConfig:
     """Retrieve the configuration for the TDengine database."""
 
+    logger.debug("Retrieving TDengine configuration...")
     return {
         "host": os.environ.get("TDENGINE_HOST", args.taos_host),
         "port": os.environ.get("TDENGINE_PORT", args.taos_port),
@@ -334,16 +323,16 @@ def register_resources(mcp: FastMCP):
             if stable:
                 stable_name = stable[0]
                 column = taos.execute_sql(f"DESCRIBE {stable_name};")
-                logger.debug(f"{stable_name} - 获取字段信息: {column}")
+                logger.debug(f"{stable_name} - Field meta: {column}")
 
                 data = column.get("data", [])
                 column_meta = column.get("column_meta", [])
 
-                # 获取字段的定义信息meta
+                # Retrieve the meta definition information of the field
                 table_column_meta = [meta[0] for meta in column_meta]
                 table_schema = []
 
-                # 将字段信息和实际的字段数据合并
+                # Combine the field information and the actual field data
                 for d in data:
                     table_schema.append(dict(zip(table_column_meta, d)))
 
@@ -428,13 +417,34 @@ def parse_arguments():
         default=30,
         help="TDengine connection timeout. Default: `%(default)d`",
     )
+    parser.add_argument(
+        "-ll",
+        "--log-level",
+        type=str,
+        default="INFO",
+        help="Log level. Default: `%(default)s`",
+    )
+
     return parser.parse_args()
 
 
-if __name__ == "__main__":
+def main():
     # Initialize the Taos client
     load_dotenv()
     args = parse_arguments()
+
+    # Set up logging. You can adjust the log level as needed. But the environment variable LOG_LEVEL has higher priority.
+    logging.basicConfig(
+        level=os.environ.get("LOG_LEVEL", args.log_level.upper()),
+        format="%(asctime)s - %(module)s.%(funcName)s:%(lineno)d - | %(levelname)s | - %(message)s",
+    )
+
+    mcp_app = FastMCP(
+        name="[TDengine-MCP-Server]",
+        description="TDengine-MCP-Server",
+        lifespan=server_lifespan,
+        dependencies=["dotenv", "taosrest"],
+    )
     mcp_app.config = get_taos_config(args)
 
     for register_func in (register_prompts, register_tools, register_resources):
