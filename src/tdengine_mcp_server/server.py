@@ -169,7 +169,7 @@ def get_taos_config(args: argparse.Namespace) -> TaosConfig:
         "username": os.environ.get("TDENGINE_USERNAME", args.taos_username),
         "password": os.environ.get("TDENGINE_PASSWORD", args.taos_password),
         "database": os.environ.get("TDENGINE_DATABASE", args.taos_database),
-        "timeout": os.environ.get("TDENGINE_TIMEOUT", args.taos_timeout),
+        "timeout": int(os.environ.get("TDENGINE_TIMEOUT", args.taos_timeout)),
     }
 
 
