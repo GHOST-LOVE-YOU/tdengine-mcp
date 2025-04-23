@@ -21,7 +21,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install uv
         run: |
@@ -33,6 +33,10 @@ jobs:
         with:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-${{ hashFiles('pyproject.toml') }}
+
+      - name: Install tomli for version verification
+        run: |
+          uv pip install tomli
 
       - name: Verify version consistency
         run: |
@@ -64,7 +68,7 @@ jobs:
       - release-build
     environment:
       name: pypi
-      url: https://pypi.org/project/your-package/${{ github.event.release.tag_name }}
+      url: https://pypi.org/project/tdengine-mcp-server/${{ github.event.release.tag_name }}
 
     steps:
       - name: Retrieve release distributions
