@@ -443,7 +443,7 @@ def main():
         name="[TDengine-MCP-Server]",
         description="TDengine-MCP-Server",
         lifespan=server_lifespan,
-        dependencies=["dotenv", "taosrest"],
+        dependencies=["dotenv", "taospy"],
     )
     mcp_app.config = get_taos_config(args)
 
