@@ -17,9 +17,8 @@ This MCP server works with any tool that supports the Model Context Protocol, in
 ### What It Does
 
 - ✅ Execute **read-only** TDengine queries (SELECT, SHOW, DESCRIBE only)
-- ✅ Work with predefined environments (local, development, staging, production)
-- ✅ Provide database information and metadata
-- ✅ List available database environments
+- ✅ Provide database/stable information and metadata
+- ✅ List available database and stables
 
 ### What It Doesn't Do
 
@@ -27,7 +26,7 @@ This MCP server works with any tool that supports the Model Context Protocol, in
 - ❌ Provide database design or schema generation capabilities
 - ❌ Function as a full database management tool
 
-This tool is designed specifically for **data investigation and exploration** through read-only queries. It is not intended for database administration, schema management, or data modification.
+This tool is designed specifically for **data investigation and exploration** through read-only queries. **It is not intended for database administration, schema management, or data modification.**
 
 
 ## Quick Install
@@ -45,11 +44,11 @@ uvx tdengine_mcp_server
 | Environment Variable | Description | Default |
 |---------------------|-------------|---------|
 | LOG_LEVEL | Set the log level (DEBUG, INFO, WARN, ERROR) | INFO |
-| TDENGINE_HOST | Database host for environment | - |
-| TDENGINE_PORT | Database port | - |
-| TDENGINE_USERNAME | Database username | - |
-| TDENGINE_PASSWORD | Database password | - |
-| TDENGINE_DATABASE | Database name | 3306 |
+| TDENGINE_HOST | Database host for environment | localhost |
+| TDENGINE_PORT | Database port | 6041 |
+| TDENGINE_USERNAME | Database username | root |
+| TDENGINE_PASSWORD | Database password | taosdata |
+| TDENGINE_DATABASE | Database name | log |
 | TDENGINE_TIMEOUT | Set the connection timeout in seconds | 30 |
 
 ## Integration with AI Assistants
@@ -76,14 +75,12 @@ The TDengine Query MCP server provides three main tools that your AI assistant c
 
 #### 1. query
 
-Execute read-only SQL queries against a specific environment:
+Execute read-only SQL queries against a specific stable:
 
 ```
 Use the query tool to run:
 
 SELECT * FROM customers WHERE itemid > '2025-01-01' LIMIT 10;
-
-on the development environment
 ```
 
 #### 2. info
@@ -92,12 +89,13 @@ Get detailed information about your stable:
 
 ```
 Use the info tool to check the meta info about the specified stable.
+
+DESCRIBE disks_info;
 ```
 
 ## Security Considerations
 
 - ✅ Only read-only queries are allowed (SELECT, SHOW, DESCRIBE)
-- ✅ Query timeouts prevent runaway operations
 
 ## Troubleshooting
 
@@ -112,21 +110,11 @@ If you're having trouble connecting:
 
 ### Common Errors
 
-**Error: No connection pool available for environment**
-
-- Make sure you've defined all required environment variables for that environment
-
 **Error: Query execution failed**
 
 - Verify your SQL syntax
 - Check that you're only using supported query types (SELECT, SHOW, DESCRIBE)
 - Ensure your query is truly read-only
-
-For more comprehensive troubleshooting, see the [Troubleshooting Guide](docs/TROUBLESHOOTING.md).
-
-For examples of how to integrate with AI assistants, see the [Integration Examples](docs/INTEGRATION_EXAMPLE.md).
-
-For implementation details about the MCP protocol, see the [MCP README](docs/MCP_README.md).
 
 ## Contributing
 
@@ -134,4 +122,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ---
 
-For more information or support, please [open an issue](https://github.com/devakone/TDengine-query-mcp-server/issues) on the GitHub repository. 
+For more information or support, please [open an issue](https://github.com/Abeautifulsnow/tdengine-mcp/issues) on the GitHub repository. 
