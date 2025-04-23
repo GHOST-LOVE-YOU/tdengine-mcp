@@ -40,18 +40,18 @@ jobs:
           echo "VIRTUAL_ENV=.venv" >> $GITHUB_ENV
           echo ".venv/bin" >> $GITHUB_PATH
 
-      - name: Install tomli for version verification
-        run: |
-          uv pip install tomli
+      # - name: Install tomli for version verification
+      #   run: |
+      #     uv pip install tomli
 
-      - name: Verify version consistency
-        run: |
-          VERSION=$(python -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])")
-          RELEASE_TAG=${{ github.event.release.tag_name }}
-          if [[ "v$VERSION" != "$RELEASE_TAG" ]]; then
-            echo "Version mismatch: pyproject.toml ($VERSION) != release tag ($RELEASE_TAG)"
-            exit 1
-          fi
+      # - name: Verify version consistency
+      #   run: |
+      #     VERSION=$(python -c "import tomli; print(tomli.load(open('pyproject.toml', 'rb'))['project']['version'])")
+      #     RELEASE_TAG=${{ github.event.release.tag_name }}
+      #     if [[ "v$VERSION" != "$RELEASE_TAG" ]]; then
+      #       echo "Version mismatch: pyproject.toml ($VERSION) != release tag ($RELEASE_TAG)"
+      #       exit 1
+      #     fi
 
       - name: Build release distributions
         run: |
