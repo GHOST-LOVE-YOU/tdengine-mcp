@@ -90,6 +90,6 @@ jobs:
 
       - name: Test package with uvx
         run: |
-          uvx your-package --version
+          uvx tdengine-mcp-server -h
         env:
           UVX_PYPI_INDEX: https://pypi.org/simple/
