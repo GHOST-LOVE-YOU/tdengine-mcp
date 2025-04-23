@@ -34,6 +34,12 @@ jobs:
           path: ~/.cache/uv
           key: ${{ runner.os }}-uv-${{ hashFiles('pyproject.toml') }}
 
+      - name: Create virtual environment
+        run: |
+          uv venv .venv
+          echo "VIRTUAL_ENV=.venv" >> $GITHUB_ENV
+          echo ".venv/bin" >> $GITHUB_PATH
+
       - name: Install tomli for version verification
         run: |
           uv pip install tomli
@@ -54,7 +60,7 @@ jobs:
       - name: Test CLI entry point
         run: |
           uv pip install dist/*.whl
-          your-cli --version
+          uv run -m tdengine_mcp_server -h
 
       - name: Upload distributions
         uses: actions/upload-artifact@v4
