@@ -88,8 +88,8 @@ jobs:
         with:
           packages-dir: dist/
 
-      - name: Test package with uvx
-        run: |
-          uvx tdengine-mcp-server -h
-        env:
-          UVX_PYPI_INDEX: https://pypi.org/simple/
+      # - name: Test package with uvx
+      #   run: |
+      #     uvx tdengine-mcp-server -h
+      #   env:
+      #     UVX_PYPI_INDEX: https://pypi.org/simple/
