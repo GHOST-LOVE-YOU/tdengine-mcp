@@ -25,3 +25,6 @@ disable_error_code = ["import-untyped", "arg-type", "attr-defined", "type-arg", 
 module = "*"
 disable_error_code = ["import-untyped", "arg-type", "attr-defined", "type-arg", "valid-type", "union-attr", "call-arg", "annotation-unchecked", "typeddict-item"]
 ignore_missing_imports = true
+
+[project.scripts]
+tdengine-mcp-server = "tdengine-mcp-server:main"
