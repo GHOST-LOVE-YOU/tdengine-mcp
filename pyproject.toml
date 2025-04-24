@@ -1,6 +1,6 @@
 [project]
 name = "tdengine-mcp-server"
-version = "0.0.3"
+version = "0.0.4"
 description = "Add your description here"
 readme = "README.md"
 authors = [
@@ -27,4 +27,4 @@ disable_error_code = ["import-untyped", "arg-type", "attr-defined", "type-arg", 
 ignore_missing_imports = true
 
 [project.scripts]
-tdengine-mcp-server = "tdengine-mcp-server:main"
+tdengine-mcp-server = "tdengine_mcp_server:main"
