@@ -1,6 +1,7 @@
 # TDengine Query MCP Server
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![smithery badge](https://smithery.ai/badge/@Abeautifulsnow/tdengine-mcp)](https://smithery.ai/server/@Abeautifulsnow/tdengine-mcp)
 
 A Model Context Protocol (MCP) server that provides **read-only** TDengine database queries for AI assistants. Execute queries, explore database structures, and investigate your data directly from your AI-powered tools.
 

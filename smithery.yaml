@@ -1,0 +1,63 @@
+# Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
+
+startCommand:
+  type: sse
+  configSchema:
+    # JSON Schema defining the configuration options for the MCP.
+    type: object
+    required:
+      - taosUser
+      - taosPassword
+      - taosDatabase
+    properties:
+      taosHost:
+        type: string
+        description: "The hostname of the taos server. Use localhost for local connections or a specific address for remote databases. For Docker, host.docker.internal allows accessing the host machine."
+        default: "localhost"
+      taosPort:
+        type: number
+        description: "The port of the taos server (default: 6041)."
+        default: 6041
+      taosUser:
+        type: string
+        description: "The username for taos authentication."
+        default: "root"
+      taosPassword:
+        type: string
+        description: "The password for taos authentication."
+        default: "taosdata"
+      taosDatabase:
+        type: string
+        description: "The database to connect to."
+        default: "log"
+      taosTimeout:
+        type: number
+        description: "The timeout for the taos connection."
+        default: 30
+      logLevel:
+        type: string
+        description: "The log level to use."
+        default: "INFO"
+      transport:
+        type: string
+        description: "The transport to use."
+        default: "sse"
+  commandFunction:
+    # A function that produces the CLI command to start the MCP on stdio.
+    |-
+    (config) => ({ 
+      command: 'docker', 
+      args: [
+        'run',
+        '-i',
+        '--rm',
+        '-e', `TDENGINE_HOST=${config.taosHost}`,
+        '-e', `TDENGINE_PORT=${config.taosPort}`,
+        '-e', `TDENGINE_USERNAME=${config.taosUser}`,
+        '-e', `TDENGINE_PASSWORD=${config.taosPassword}`,
+        '-e', `TDENGINE_DATABASE=${config.taosDatabase}`,
+        '-e', `TDENGINE_TIMEOUT=${config.taosTimeout}`,
+        '-e', `LOG_LEVEL=${config.logLevel}`,
+        'smithery/tdengine-mcp-server:latest'
+      ]
+    })
