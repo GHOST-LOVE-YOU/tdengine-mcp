@@ -424,6 +424,14 @@ def parse_arguments():
         default="INFO",
         help="Log level. Default: `%(default)s`",
     )
+    parser.add_argument(
+        "-trans",
+        "--transport",
+        type=str,
+        choices=["sse", "stdio"],
+        default="sse",
+        help="The transport to use. Default: `%(default)s`",
+    )
 
     return parser.parse_args()
 
@@ -450,4 +458,5 @@ def main():
     for register_func in (register_prompts, register_tools, register_resources):
         register_func(mcp_app)
 
-    mcp_app.run(transport="sse")
+    logger.info(f"[TDengine-MCP-Server] server started with transport: {args.transport}")
+    mcp_app.run(transport=args.transport)
