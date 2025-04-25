@@ -1,7 +1,7 @@
 # Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
 startCommand:
   type: stdio
-  # configSchema:
+  configSchema: {}
   #   # JSON Schema defining the configuration options for the MCP.
   #   type: object
   #   required:
@@ -47,7 +47,8 @@ startCommand:
     |-
     (config) => ({ 
       command: 'tdengine-mcp-server', 
-      args: ['-trans', 'stdio', '-ll', 'debug']
+      args: ['-trans', 'stdio', '-ll', 'debug'],
+      env: {}
       # env: {
       #   TDENGINE_HOST: config.taosHost,
       #   TDENGINE_PORT: config.taosPort,
