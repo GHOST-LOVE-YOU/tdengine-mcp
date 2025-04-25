@@ -50,9 +50,5 @@ RUN chown -R app:app /app
 # Switch to non-root user
 USER app
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
 # when running the container, add --db-path and a bind mount to the host's db file
 ENTRYPOINT ["tdengine-mcp-server"]
