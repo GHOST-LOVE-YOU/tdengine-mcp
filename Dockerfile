@@ -44,4 +44,4 @@ RUN chown -R app:app /app
 USER app
 
 # when running the container, add --db-path and a bind mount to the host's db file
-ENTRYPOINT ["tdengine-mcp-server"]
+ENTRYPOINT ["tdengine-mcp-server", "-trans", "stdio"， "-ll", "debug"]
