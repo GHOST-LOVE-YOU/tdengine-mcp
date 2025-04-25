@@ -69,7 +69,19 @@ and then run:
 python -m tdengine_mcp_server -h
 ```
 
-to get the how-to-use infomation.
+### Install by `uvx` command
+
+```bash
+uvx tdengine-mcp-server -h
+```
+
+### Install From smithery by `npx` command
+
+```bash
+npx -y @smithery/cli@latest install @Abeautifulsnow/tdengine-mcp --client cursor --config '"{}"'
+```
+
+You can change the client after the `--client` option with alternatives `claude`, 'windsurf' and so on. Also you can refer to this: [smithery/tdengine-mcp-server](https://smithery.ai/server/@Abeautifulsnow/tdengine-mcp)
 
 ## Configuration Options
 
@@ -84,6 +96,7 @@ to get the how-to-use infomation.
 | TDENGINE_PASSWORD | Database password | taosdata |
 | TDENGINE_DATABASE | Database name | log |
 | TDENGINE_TIMEOUT | Set the connection timeout in seconds | 30 |
+| TRANSPORT | Control the transport to use | stdio |
 
 ### cli usage
 
