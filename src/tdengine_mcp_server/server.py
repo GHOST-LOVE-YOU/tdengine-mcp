@@ -346,7 +346,7 @@ def register_prompts(mcp: FastMCP):
     def taos_query() -> str:
         """Query a Taos(涛思) database."""
 
-        return get_prompt_template("taos")
+        return get_prompt_template("prompt")
 
     @mcp.prompt()
     def describe_query_prompt(
