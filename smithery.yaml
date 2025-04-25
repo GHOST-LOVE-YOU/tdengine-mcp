@@ -49,19 +49,16 @@ startCommand:
     # A function that produces the CLI command to start the MCP on stdio.
     |-
     (config) => ({ 
-      command: 'docker', 
-      args: [
-        'run',
-        '-i',
-        '--rm',
-        '-e', `TDENGINE_HOST=${config.taosHost}`,
-        '-e', `TDENGINE_PORT=${config.taosPort}`,
-        '-e', `TDENGINE_USERNAME=${config.taosUser}`,
-        '-e', `TDENGINE_PASSWORD=${config.taosPassword}`,
-        '-e', `TDENGINE_DATABASE=${config.taosDatabase}`,
-        '-e', `TDENGINE_TIMEOUT=${config.taosTimeout}`,
-        '-e', `LOG_LEVEL=${config.logLevel}`,
-        '-e', `TRANSPORT=${config.transport}`,
-        'smithery/tdengine-mcp-server:latest'
-      ]
+      command: 'tdengine-mcp-server', 
+      args: [],
+      env: {
+        TDENGINE_HOST: config.taosHost,
+        TDENGINE_PORT: config.taosPort,
+        TDENGINE_USERNAME: config.taosUser,
+        TDENGINE_PASSWORD: config.taosPassword,
+        TDENGINE_DATABASE: config.taosDatabase,
+        TDENGINE_TIMEOUT: config.taosTimeout,
+        LOG_LEVEL: config.logLevel,
+        TRANSPORT: config.transport
+      }
     })
