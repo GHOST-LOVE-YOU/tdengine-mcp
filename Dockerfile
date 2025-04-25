@@ -24,18 +24,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.12-slim-bookworm
 
-# Install system dependencies required for taospy
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 
 # Create a non-root user
 RUN groupadd -r app && useradd -r -g app app
 
-COPY --from=uv /root/.local /root/.local
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
 COPY --from=uv --chown=app:app /app /app
 
