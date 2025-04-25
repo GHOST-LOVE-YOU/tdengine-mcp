@@ -47,7 +47,7 @@ startCommand:
     |-
     (config) => ({ 
       command: 'tdengine-mcp-server', 
-      args: [],
+      args: ['-trans', 'stdio'],
       env: {
         TDENGINE_HOST: config.taosHost,
         TDENGINE_PORT: config.taosPort,
