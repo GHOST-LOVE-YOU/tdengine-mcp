@@ -110,6 +110,8 @@ options:
                         TDengine connection timeout. Default: `30`
   -ll, --log-level LOG_LEVEL
                         Log level. Default: `INFO`
+  -trans, --transport {sse,stdio}
+                        The transport to use. Default: `sse`
 ```
 
 ## Integration with AI Assistants
