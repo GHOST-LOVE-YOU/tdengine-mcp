@@ -458,7 +458,8 @@ def main():
     for register_func in (register_prompts, register_tools, register_resources):
         register_func(mcp_app)
 
+    _transort = os.environ.get("TRANSPORT", args.transport)
     logger.info(
-        f"[TDengine-MCP-Server] server started with transport: {args.transport}"
+        f"[TDengine-MCP-Server] server started with transport: {_transort}"
     )
-    mcp_app.run(transport=os.environ.get("TRANSPORT", args.transport))
+    mcp_app.run(transport=_transort)
