@@ -443,7 +443,7 @@ def main():
 
     # Set up logging. You can adjust the log level as needed. But the environment variable LOG_LEVEL has higher priority.
     logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", args.log_level.upper()),
+        level=os.environ.get("LOG_LEVEL", args.log_level).upper(),
         format="%(asctime)s - %(module)s.%(funcName)s:%(lineno)d - | %(levelname)s | - %(message)s",
     )
 
