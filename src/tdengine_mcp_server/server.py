@@ -281,14 +281,14 @@ def register_tools(mcp: FastMCP):
 
         return result
 
-    @mcp.tool(name="get_taos_db_data")
-    def get_taos_db_data(
+    @mcp.tool(name="query_taos_db_data")
+    def query_taos_db_data(
         ctx: Context,
         sql_stmt: str = Field(
             description="The sql statement you want to retrieve data from taos db"
         ),
     ) -> TaosSqlResponse:
-        """**Important**: Get all data from the specified table on `Taos database(涛思数据库)`.
+        """**Important**: Run a read-only SQL query on `Taos database(涛思数据库)`.
 
         Args:
             sql_stmt (str): The sql statement you want to retrieve data from taos db.
@@ -459,7 +459,5 @@ def main():
         register_func(mcp_app)
 
     _transort = os.environ.get("TRANSPORT", args.transport)
-    logger.info(
-        f"[TDengine-MCP-Server] server started with transport: {_transort}"
-    )
+    logger.info(f"[TDengine-MCP-Server] server started with transport: {_transort}")
     mcp_app.run(transport=_transort)
