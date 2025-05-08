@@ -6,7 +6,7 @@ startCommand:
     # A function that produces the CLI command to start the MCP on stdio.
     |-
     (config) => ({ 
-      command: 'tdengine-mcp-server', 
-      args: ['-trans', 'stdio', '-ll', 'debug'],
+      command: 'python', 
+      args: ['-m', 'tdengine_mcp_server', '-trans', 'stdio', '-ll', 'debug'],
       env: {}
     })
