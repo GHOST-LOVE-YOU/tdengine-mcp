@@ -1,4 +1,3 @@
-import argparse
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -20,6 +19,7 @@ from pydantic import Field
 from taosrest import RestClient
 
 from .template import get_prompt_template
+from .args import parse_arguments, get_taos_config, TaosConfig
 
 logger = logging.getLogger(__name__)
 
@@ -58,30 +58,17 @@ class TaosSqlResponse(TypedDict):
     rows: int
 
 
-class TaosConfig(TypedDict):
-    """TDengine configuration"""
-
-    host: str
-    port: int
-    username: str
-    password: str
-    database: str
-    timeout: int
-
-
 class TAOSClient:
     def __init__(
         self,
         *,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
+        url: Optional[str] = None,
         username: Optional[str] = None,
         password: Optional[str] = None,
         database: Optional[str] = None,
         timeout: int = 30,
     ) -> None:
-        self.host = host
-        self.port = port
+        self.url = url
         self.username = username
         self.password = password
         self.database = database
@@ -90,7 +77,7 @@ class TAOSClient:
         self.client: RestClient = next(self.init_db())
 
     def init_db(self) -> Generator[RestClient, None, None]:
-        _url = f"http://{self.host}:{self.port}"
+        _url = self.url
         try:
             client = RestClient(
                 url=_url,
@@ -103,7 +90,7 @@ class TAOSClient:
             yield client
         except Exception as e:
             logger.error(
-                f"Failed to connect to taos db => url: {_url}, host: {self.host}, username: {self.username}, database: {self.database}"
+                f"Failed to connect to taos db => url: {_url}, username: {self.username}, database: {self.database}"
             )
             raise e
 
@@ -157,20 +144,6 @@ def validate_sql_stmt(sql_stmt: str):
         raise ValueError(
             "Security restrictions: Only read-only statements such as queries are allowed to be executed. All other operations are prohibited."
         )
-
-
-def get_taos_config(args: argparse.Namespace) -> TaosConfig:
-    """Retrieve the configuration for the TDengine database."""
-
-    logger.debug("Retrieving TDengine configuration...")
-    return {
-        "host": os.environ.get("TDENGINE_HOST", args.taos_host),
-        "port": os.environ.get("TDENGINE_PORT", args.taos_port),
-        "username": os.environ.get("TDENGINE_USERNAME", args.taos_username),
-        "password": os.environ.get("TDENGINE_PASSWORD", args.taos_password),
-        "database": os.environ.get("TDENGINE_DATABASE", args.taos_database),
-        "timeout": int(os.environ.get("TDENGINE_TIMEOUT", args.taos_timeout)),
-    }
 
 
 def register_tools(mcp: FastMCP):
@@ -371,69 +344,6 @@ def register_prompts(mcp: FastMCP):
         result = [UserMessage(prompt_text)]
         logger.debug("Exiting describe_query_prompt()")
         return result  # type: ignore
-
-
-def parse_arguments():
-    parser = argparse.ArgumentParser(description="TDengine MCP Server")
-    parser.add_argument(
-        "-th",
-        "--taos-host",
-        type=str,
-        default="localhost",
-        help="TDengine host address. Default: `%(default)s`",
-    )
-    parser.add_argument(
-        "-tp",
-        "--taos-port",
-        type=int,
-        default=6041,
-        help="TDengine port number. Default: `%(default)d`",
-    )
-    parser.add_argument(
-        "-tu",
-        "--taos-username",
-        type=str,
-        default="root",
-        help="TDengine username. Default: `%(default)s`",
-    )
-    parser.add_argument(
-        "-pwd",
-        "--taos-password",
-        type=str,
-        default="taosdata",
-        help="TDengine password. Default: `%(default)s`",
-    )
-    parser.add_argument(
-        "-db",
-        "--taos-database",
-        type=str,
-        default="default",
-        help="TDengine database name. Default: `%(default)s`",
-    )
-    parser.add_argument(
-        "-to",
-        "--taos-timeout",
-        type=int,
-        default=30,
-        help="TDengine connection timeout. Default: `%(default)d`",
-    )
-    parser.add_argument(
-        "-ll",
-        "--log-level",
-        type=str,
-        default="INFO",
-        help="Log level. Default: `%(default)s`",
-    )
-    parser.add_argument(
-        "-trans",
-        "--transport",
-        type=str,
-        choices=["sse", "stdio"],
-        default="sse",
-        help="The transport to use. Default: `%(default)s`",
-    )
-
-    return parser.parse_args()
 
 
 def main():
