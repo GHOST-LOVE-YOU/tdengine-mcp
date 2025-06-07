@@ -1099,20 +1099,26 @@ def main():
         format="%(asctime)s - %(module)s.%(funcName)s:%(lineno)d - | %(levelname)s | - %(message)s",
     )
 
+    _transport = os.environ.get("TRANSPORT", args.transport)
+    _port = int(os.environ.get("PORT", args.port))
+
     mcp_app = FastMCP(
         name="[TDengine-MCP-Server]",
         description="TDengine-MCP-Server",
         lifespan=server_lifespan,
         dependencies=["dotenv", "taospy"],
+        port=_port,
     )
     mcp_app.config = get_taos_config(args)
 
     for register_func in (register_prompts, register_tools, register_resources):
         register_func(mcp_app)
 
-    _transort = os.environ.get("TRANSPORT", args.transport)
-    logger.info(f"[TDengine-MCP-Server] server started with transport: {_transort}")
-    mcp_app.run(transport=_transort)
+    logger.info(f"[TDengine-MCP-Server] server started with transport: {_transport}")
+    if _transport == "sse":
+        logger.info(f"Listening on port {_port}")
+    mcp_app.run(transport=_transport)
+
 
 if __name__ == "__main__":
     main()

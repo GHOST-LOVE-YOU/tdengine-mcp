@@ -81,5 +81,12 @@ def parse_arguments():
         default="sse",
         help="The transport to use. Default: `%(default)s`",
     )
+    parser.add_argument(
+        "-p",
+        "--port",
+        type=int,
+        default=8000,
+        help="Port to listen on for HTTP transports. Default: `%(default)d`",
+    )
 
     return parser.parse_args() 
