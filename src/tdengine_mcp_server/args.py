@@ -88,5 +88,12 @@ def parse_arguments():
         default=8000,
         help="Port to listen on for HTTP transports. Default: `%(default)d`",
     )
+    parser.add_argument(
+        "-H",
+        "--host",
+        type=str,
+        default="0.0.0.0",
+        help="Host to listen on for HTTP transports. Default: `%(default)s`",
+    )
 
     return parser.parse_args() 

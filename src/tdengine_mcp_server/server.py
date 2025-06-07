@@ -1101,6 +1101,7 @@ def main():
 
     _transport = os.environ.get("TRANSPORT", args.transport)
     _port = int(os.environ.get("PORT", args.port))
+    _host = os.environ.get("HOST", args.host)
 
     mcp_app = FastMCP(
         name="[TDengine-MCP-Server]",
@@ -1108,6 +1109,7 @@ def main():
         lifespan=server_lifespan,
         dependencies=["dotenv", "taospy"],
         port=_port,
+        host=_host,
     )
     mcp_app.config = get_taos_config(args)
 
@@ -1116,7 +1118,7 @@ def main():
 
     logger.info(f"[TDengine-MCP-Server] server started with transport: {_transport}")
     if _transport == "sse":
-        logger.info(f"Listening on port {_port}")
+        logger.info(f"Listening on {_host}:{_port}")
     mcp_app.run(transport=_transport)
 
 
