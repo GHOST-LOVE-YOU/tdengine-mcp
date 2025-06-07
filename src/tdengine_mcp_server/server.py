@@ -18,8 +18,8 @@ from mcp.server.fastmcp.prompts.base import Message, UserMessage
 from pydantic import Field
 from taosrest import RestClient
 
-from .template import get_prompt_template
-from .args import parse_arguments, get_taos_config, TaosConfig
+from template import get_prompt_template
+from args import parse_arguments, get_taos_config, TaosConfig
 
 logger = logging.getLogger(__name__)
 
@@ -1113,3 +1113,6 @@ def main():
     _transort = os.environ.get("TRANSPORT", args.transport)
     logger.info(f"[TDengine-MCP-Server] server started with transport: {_transort}")
     mcp_app.run(transport=_transort)
+
+if __name__ == "__main__":
+    main()
