@@ -149,38 +149,70 @@ def validate_sql_stmt(sql_stmt: str):
 def register_tools(mcp: FastMCP):
     """Register tools for the FastMCP application."""
 
-    @mcp.tool(name="test_table_exists")
-    def test_table_exists(
+    # ==================== 基础工具：数据探索 ====================
+    
+    @mcp.tool(name="get_data_latest_date")
+    def get_data_latest_date(
         ctx: Context,
-        stable_name: str = Field(description="The name of the stable"),
-    ) -> Dict[str, bool]:
-        """**Important**: Check if the `stable` exists in the current `Taos database(涛思数据库)` configuration.
-
+        db_name: Optional[str] = Field(None, description="数据库名称，为空则使用当前配置的数据库"),
+    ) -> Dict[str, str]:
+        """获取数据库中所有数据的最新更新日期。
+        
+        这个工具会遍历所有超级表，找到最新的时间戳，并将其定义为"今天"。
+        当用户问"今天"、"昨天"或"最近"时，应首先使用此工具来确定日期上下文。
+        
         Args:
-            stable_name (str): The name of the stable.
-
+            db_name: 数据库名称
+            
         Returns:
-            Dict: The `stable_name` exists or not in the current Taos configuration. If the `stable_name` does not exist, an empty dictionary is returned.
-
-            The key of the dictionary is the `stable_name` name, and the value is a boolean indicating whether the `stable_name` exists.
+            Dict: 包含最新日期的字典，格式如 {"latest_date": "YYYY-MM-DD HH:MM:SS.mmm"}
         """
-
         taos = ctx.request_context.lifespan_context.client
-        query = f"SHOW STABLES LIKE '{stable_name}'"
-        result = taos.execute_sql(query)
-        return {stable_name: bool(result)}
+        if db_name is None or db_name == "":
+            db_name = taos.database
+
+        stables_result = taos.execute_sql(f"SHOW {db_name}.STABLES;")
+        stables = [stable[0] for stable in stables_result.get("data", [])]
+
+        latest_timestamp = None
+
+        for stable_name in stables:
+            try:
+                # Check if table has a timestamp column 'ts'
+                desc_result = taos.execute_sql(f"DESCRIBE {db_name}.{stable_name};")
+                fields = [field[0].lower() for field in desc_result.get("data", [])]
+                if 'ts' not in fields:
+                    continue
+
+                query = f"SELECT LAST_ROW(ts) FROM {db_name}.{stable_name};"
+                result = taos.execute_sql(query)
+                
+                if result.get("data") and result["data"][0][0] is not None:
+                    current_stable_latest = result["data"][0][0]
+                    
+                    if latest_timestamp is None or current_stable_latest > latest_timestamp:
+                        latest_timestamp = current_stable_latest
+
+            except Exception as e:
+                logger.warning(f"Could not get latest timestamp for stable {stable_name}: {e}")
+                continue
+
+        if latest_timestamp:
+            return {"latest_date": str(latest_timestamp)}
+        else:
+            # Fallback to current system time if no data found
+            from datetime import datetime
+            return {"latest_date": datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}
 
     @mcp.tool(name="get_all_dbs")
     def get_all_dbs(ctx: Context) -> TaosSqlResponse:
-        """Get all databases.
-
+        """获取所有数据库列表。
+        
         Returns:
-            TaosSqlResponse: All databases in the current Taos configuration.
+            TaosSqlResponse: 系统中所有可用的数据库列表。
         """
-
         taos = ctx.request_context.lifespan_context.client
         result = taos.execute_sql("SHOW DATABASES;")
-
         return result
 
     @mcp.tool(name="get_all_stables")
@@ -188,144 +220,84 @@ def register_tools(mcp: FastMCP):
         ctx: Context,
         db_name: Optional[str] = Field(
             None,
-            description="The name of the database. Default is None which means the configured database.",
+            description="数据库名称，为空则使用当前配置的数据库"
         ),
     ) -> TaosSqlResponse:
-        """Get all stables.
-
+        """获取指定数据库中的所有超级表列表。
+        
         Args:
-            db_name (Optional[str]): The name of the database. Defaults to None. When the value is None, it means the configured database is used.
-
+            db_name: 数据库名称，为空则使用当前配置的数据库
+            
         Returns:
-            TaosSqlResponse: All stables in the current Taos database.
+            TaosSqlResponse: 数据库中所有超级表的列表。
         """
-
         taos = ctx.request_context.lifespan_context.client
         if db_name is None or db_name == "":
             db_name = taos.database
 
         result = taos.execute_sql(f"SHOW {db_name}.STABLES;")
-
         return result
 
     @mcp.tool(name="switch_db")
     def switch_db(
         ctx: Context,
-        db_name: str = Field(description="The name of the database to switch to"),
+        db_name: str = Field(description="要切换到的数据库名称"),
     ) -> TaosSqlResponse:
-        """Switch to the specified database.
-
+        """切换到指定的数据库。
+        
         Args:
-            db_name (str): The name of the database to switch to.
-
+            db_name: 要切换到的数据库名称
+            
         Returns:
-            TaosSqlResponse: The result of the `USE` command.
+            TaosSqlResponse: 切换操作的结果。
         """
-
         taos = ctx.request_context.lifespan_context.client
         result = taos.execute_sql(f"USE {db_name};")
-
         return result
 
-    @mcp.tool(name="get_field_infos")
-    def get_field_infos(
+    @mcp.tool(name="get_stable_schema")
+    def get_stable_schema(
         ctx: Context,
+        stable_name: str = Field(description="超级表名称"),
         db_name: Optional[str] = Field(
             None,
-            description="The name of the database. Default is None which means the configured database.",
+            description="数据库名称，为空则使用当前配置的数据库"
         ),
-        stable_name: str = Field(description="The name of the stable"),
     ) -> TaosSqlResponse:
-        """Get the field information of the specified stable.
-
+        """获取超级表的结构信息，包括字段定义和数据类型。
+        
         Args:
-            db_name (Optional[str]): The name of the database. Defaults to None. When the value is None, it means the configured database is used.
-            stable_name (str): The name of the stable.
-
+            stable_name: 超级表名称
+            db_name: 数据库名称，为空则使用当前配置的数据库
+            
         Returns:
-            TaosSqlResponse: The field information of the specified stable.
+            TaosSqlResponse: 超级表的字段结构信息。
         """
-
         taos = ctx.request_context.lifespan_context.client
         if db_name is None or db_name == "":
             db_name = taos.database
 
         result = taos.execute_sql(f"DESCRIBE {db_name}.{stable_name};")
-
         return result
 
-    @mcp.tool(name="query_taos_db_data")
-    def query_taos_db_data(
+    @mcp.tool(name="get_tag_info")
+    def get_tag_info(
         ctx: Context,
-        sql_stmt: str = Field(
-            description="The sql statement you want to retrieve data from taos db"
-        ),
-    ) -> TaosSqlResponse:
-        """**Important**: Run a read-only SQL query on `Taos database(涛思数据库)`.
-
-        Args:
-            sql_stmt (str): The sql statement you want to retrieve data from taos db.
-
-        Returns:
-            List: All data from the specified table.
-
-        """
-
-        taos = ctx.request_context.lifespan_context.client
-        return taos.execute_sql(sql_stmt)  # type: ignore
-
-    @mcp.tool(name="get_all_tables")
-    def get_all_tables(
-        ctx: Context,
+        stable_name: str = Field(description="超级表名称"),
         db_name: Optional[str] = Field(
             None,
-            description="The name of the database. Default is None which means the configured database.",
-        ),
-        stable_name: Optional[str] = Field(
-            None,
-            description="The name of the stable to filter tables. If specified, only tables under this stable will be returned.",
+            description="数据库名称，为空则使用当前配置的数据库"
         ),
     ) -> TaosSqlResponse:
-        """Get all tables (子表) in the database or under a specific stable.
-
+        """获取超级表的标签信息。
+        
         Args:
-            db_name (Optional[str]): The name of the database. Defaults to None.
-            stable_name (Optional[str]): The name of the stable to filter tables. Defaults to None.
-
+            stable_name: 超级表名称
+            db_name: 数据库名称，为空则使用当前配置的数据库
+            
         Returns:
-            TaosSqlResponse: All tables in the specified database or under the stable.
+            TaosSqlResponse: 超级表的标签定义信息。
         """
-
-        taos = ctx.request_context.lifespan_context.client
-        if db_name is None or db_name == "":
-            db_name = taos.database
-
-        if stable_name:
-            result = taos.execute_sql(f"SHOW {db_name}.TABLES LIKE '{stable_name}_%';")
-        else:
-            result = taos.execute_sql(f"SHOW {db_name}.TABLES;")
-
-        return result
-
-    @mcp.tool(name="get_tag_infos")
-    def get_tag_infos(
-        ctx: Context,
-        db_name: Optional[str] = Field(
-            None,
-            description="The name of the database. Default is None which means the configured database.",
-        ),
-        stable_name: str = Field(description="The name of the stable"),
-    ) -> TaosSqlResponse:
-        """Get tag information of the specified stable.
-
-        Args:
-            db_name (Optional[str]): The name of the database. Defaults to None.
-            stable_name (str): The name of the stable.
-
-        Returns:
-            TaosSqlResponse: Tag information of the specified stable.
-        """
-
         taos = ctx.request_context.lifespan_context.client
         if db_name is None or db_name == "":
             db_name = taos.database
@@ -333,688 +305,570 @@ def register_tools(mcp: FastMCP):
         result = taos.execute_sql(f"SHOW TAGS FROM {db_name}.{stable_name};")
         return result
 
-    @mcp.tool(name="get_table_stats")
-    def get_table_stats(
+    @mcp.tool(name="test_stable_exists")
+    def test_stable_exists(
         ctx: Context,
+        stable_name: str = Field(description="超级表名称"),
         db_name: Optional[str] = Field(
             None,
-            description="The name of the database. Default is None which means the configured database.",
+            description="数据库名称，为空则使用当前配置的数据库"
         ),
-        stable_name: Optional[str] = Field(
-            None,
-            description="The name of the stable. If specified, get stats for this stable.",
-        ),
-        table_name: Optional[str] = Field(
-            None,
-            description="The name of the table. If specified, get stats for this table.",
-        ),
-    ) -> TaosSqlResponse:
-        """Get statistics information for tables or stables including row count, size, etc.
-
+    ) -> Dict[str, bool]:
+        """检查指定的超级表是否存在。
+        
         Args:
-            db_name (Optional[str]): The name of the database. Defaults to None.
-            stable_name (Optional[str]): The name of the stable. Defaults to None.
-            table_name (Optional[str]): The name of the table. Defaults to None.
-
+            stable_name: 超级表名称
+            db_name: 数据库名称，为空则使用当前配置的数据库
+            
         Returns:
-            TaosSqlResponse: Statistics information for the specified table/stable.
+            Dict: 包含超级表名称和是否存在的布尔值。
         """
+        taos = ctx.request_context.lifespan_context.client
+        if db_name is None or db_name == "":
+            db_name = taos.database
+            
+        query = f"SHOW {db_name}.STABLES LIKE '{stable_name}'"
+        result = taos.execute_sql(query)
+        return {stable_name: len(result.get("data", [])) > 0}
 
+    # ==================== 扩展工具：实际应用场景 ====================
+
+    @mcp.tool(name="get_device_trajectory")
+    def get_device_trajectory(
+        ctx: Context,
+        device_id: str = Field(description="设备ID或编号"),
+        start_time: str = Field(description="开始时间，格式：YYYY-MM-DD HH:MM:SS"),
+        end_time: str = Field(description="结束时间，格式：YYYY-MM-DD HH:MM:SS"),
+        stable_name: Optional[str] = Field(None, description="指定超级表名称，为空时自动匹配"),
+        db_name: Optional[str] = Field(None, description="数据库名称"),
+        limit: int = Field(1000, description="返回记录数限制"),
+    ) -> TaosSqlResponse:
+        """获取指定设备在时间范围内的轨迹数据。
+        
+        这个工具用于查询设备的移动轨迹，包括GPS坐标、高度等位置信息。
+        
+        Args:
+            device_id: 设备唯一标识符
+            start_time: 轨迹查询开始时间
+            end_time: 轨迹查询结束时间
+            stable_name: 超级表名称，为空时根据数据特征自动匹配
+            db_name: 数据库名称
+            limit: 最大返回记录数
+            
+        Returns:
+            TaosSqlResponse: 设备轨迹数据，包括时间戳、经纬度、高度等信息。
+        """
         taos = ctx.request_context.lifespan_context.client
         if db_name is None or db_name == "":
             db_name = taos.database
 
-        if table_name:
-            sql = f"SELECT COUNT(*) as row_count FROM {db_name}.{table_name};"
-        elif stable_name:
-            sql = f"SELECT COUNT(*) as row_count FROM {db_name}.{stable_name};"
+        # 如果没有指定表名，尝试自动查找包含位置信息的表
+        if stable_name is None:
+            # 查询所有超级表，寻找包含GPS/位置字段的表
+            stables_result = taos.execute_sql(f"SHOW {db_name}.STABLES;")
+            for stable_info in stables_result.get("data", []):
+                table_name = stable_info[0]
+                try:
+                    # 检查表结构是否包含位置相关字段
+                    desc_result = taos.execute_sql(f"DESCRIBE {db_name}.{table_name};")
+                    fields = [field[0].lower() for field in desc_result.get("data", [])]
+                    if any(pos_field in fields for pos_field in ['lat', 'lon', 'latitude', 'longitude', 'x', 'y']):
+                        stable_name = table_name
+                        break
+                except:
+                    continue
+            
+            if stable_name is None:
+                raise ValueError("未找到包含位置信息的超级表")
+
+        # 构建查询SQL，尝试多种可能的设备ID字段名
+        possible_id_fields = ['dev_id', 'device_id', 'id', 'sn', 'serial_no']
+        
+        # 获取表结构来确定实际的字段名
+        desc_result = taos.execute_sql(f"DESCRIBE {db_name}.{stable_name};")
+        actual_fields = [field[0] for field in desc_result.get("data", [])]
+        
+        # 找到匹配的设备ID字段
+        id_field = None
+        for field in possible_id_fields:
+            if field in actual_fields:
+                id_field = field
+                break
+        
+        if id_field is None:
+            # 如果没找到标准字段，使用第一个非时间戳字段
+            for field in actual_fields:
+                if field.lower() not in ['ts', 'timestamp']:
+                    id_field = field
+                    break
+        
+        if id_field is None:
+            raise ValueError("无法确定设备ID字段")
+
+        sql = f"""
+        SELECT * FROM {db_name}.{stable_name} 
+        WHERE {id_field} = '{device_id}' 
+        AND ts >= '{start_time}' 
+        AND ts <= '{end_time}' 
+        ORDER BY ts 
+        LIMIT {limit};
+        """
+        
+        result = taos.execute_sql(sql)
+        return result
+
+    @mcp.tool(name="get_field_statistics")
+    def get_field_statistics(
+        ctx: Context,
+        stable_name: str = Field(description="超级表名称"),
+        field_name: str = Field(description="要统计的字段名称"),
+        stat_type: str = Field(description="统计类型：distinct(去重), count(计数), value_counts(值分布统计)"),
+        start_time: Optional[str] = Field(None, description="开始时间过滤"),
+        end_time: Optional[str] = Field(None, description="结束时间过滤"),
+        db_name: Optional[str] = Field(None, description="数据库名称"),
+        limit: int = Field(100, description="返回记录数限制"),
+    ) -> TaosSqlResponse:
+        """对指定字段进行统计分析。
+        
+        Args:
+            stable_name: 超级表名称
+            field_name: 要分析的字段名称
+            stat_type: 统计类型 - distinct/count/value_counts
+            start_time: 时间过滤开始
+            end_time: 时间过滤结束
+            db_name: 数据库名称
+            limit: 结果限制数量
+            
+        Returns:
+            TaosSqlResponse: 字段统计结果。
+        """
+        taos = ctx.request_context.lifespan_context.client
+        if db_name is None or db_name == "":
+            db_name = taos.database
+
+        # 构建时间条件
+        time_condition = ""
+        if start_time and end_time:
+            time_condition = f"WHERE ts >= '{start_time}' AND ts <= '{end_time}'"
+        elif start_time:
+            time_condition = f"WHERE ts >= '{start_time}'"
+        elif end_time:
+            time_condition = f"WHERE ts <= '{end_time}'"
+
+        # 根据统计类型构建SQL
+        if stat_type == "distinct":
+            sql = f"SELECT DISTINCT {field_name} FROM {db_name}.{stable_name} {time_condition} LIMIT {limit};"
+        elif stat_type == "count":
+            sql = f"SELECT COUNT({field_name}) as count FROM {db_name}.{stable_name} {time_condition};"
+        elif stat_type == "value_counts":
+            sql = f"SELECT {field_name}, COUNT(*) as count FROM {db_name}.{stable_name} {time_condition} GROUP BY {field_name} ORDER BY count DESC LIMIT {limit};"
         else:
-            # Get stats for all stables
-            sql = f"SELECT stable_name, COUNT(*) as row_count FROM information_schema.ins_stables WHERE db_name='{db_name}' GROUP BY stable_name;"
+            raise ValueError("stat_type必须是distinct、count或value_counts之一")
 
         result = taos.execute_sql(sql)
         return result
 
-    @mcp.tool(name="get_latest_data")
-    def get_latest_data(
+    @mcp.tool(name="get_aggregated_data")
+    def get_aggregated_data(
         ctx: Context,
-        db_name: Optional[str] = Field(
-            None,
-            description="The name of the database. Default is None which means the configured database.",
-        ),
-        stable_name: Optional[str] = Field(
-            None,
-            description="The name of the stable.",
-        ),
-        table_name: Optional[str] = Field(
-            None,
-            description="The name of the table.",
-        ),
-        limit: int = Field(
-            10,
-            description="The number of latest records to retrieve. Default is 10.",
-        ),
+        stable_name: str = Field(description="超级表名称"),
+        agg_function: str = Field(description="聚合函数：max, min, avg, sum, count"),
+        field_name: str = Field(description="要聚合的字段名称"),
+        group_by_field: Optional[str] = Field(None, description="分组字段"),
+        start_time: Optional[str] = Field(None, description="开始时间过滤"),
+        end_time: Optional[str] = Field(None, description="结束时间过滤"),
+        db_name: Optional[str] = Field(None, description="数据库名称"),
+        limit: int = Field(100, description="返回记录数限制"),
     ) -> TaosSqlResponse:
-        """Get the latest data from a table or stable ordered by timestamp.
-
+        """对数据进行聚合计算，如求最大值、最小值、平均值等。
+        
         Args:
-            db_name (Optional[str]): The name of the database. Defaults to None.
-            stable_name (Optional[str]): The name of the stable. Defaults to None.
-            table_name (Optional[str]): The name of the table. Defaults to None.
-            limit (int): The number of latest records to retrieve. Default is 10.
-
+            stable_name: 超级表名称
+            agg_function: 聚合函数类型
+            field_name: 要聚合的字段
+            group_by_field: 按哪个字段分组
+            start_time: 时间过滤开始
+            end_time: 时间过滤结束
+            db_name: 数据库名称
+            limit: 结果限制数量
+            
         Returns:
-            TaosSqlResponse: The latest data records.
+            TaosSqlResponse: 聚合计算结果。
         """
-
         taos = ctx.request_context.lifespan_context.client
         if db_name is None or db_name == "":
             db_name = taos.database
 
-        if table_name:
-            target = f"{db_name}.{table_name}"
-        elif stable_name:
-            target = f"{db_name}.{stable_name}"
-        else:
-            raise ValueError("Either stable_name or table_name must be specified")
+        # 构建时间条件
+        time_condition = ""
+        if start_time and end_time:
+            time_condition = f"WHERE ts >= '{start_time}' AND ts <= '{end_time}'"
+        elif start_time:
+            time_condition = f"WHERE ts >= '{start_time}'"
+        elif end_time:
+            time_condition = f"WHERE ts <= '{end_time}'"
 
-        sql = f"SELECT * FROM {target} ORDER BY ts DESC LIMIT {limit};"
+        # 构建聚合SQL
+        agg_expr = f"{agg_function.upper()}({field_name}) as {agg_function}_{field_name}"
+        
+        if group_by_field:
+            sql = f"SELECT {group_by_field}, {agg_expr} FROM {db_name}.{stable_name} {time_condition} GROUP BY {group_by_field} ORDER BY {agg_function}_{field_name} DESC LIMIT {limit};"
+        else:
+            sql = f"SELECT {agg_expr} FROM {db_name}.{stable_name} {time_condition};"
+
+        result = taos.execute_sql(sql)
+        return result
+
+    @mcp.tool(name="filter_data_by_condition")
+    def filter_data_by_condition(
+        ctx: Context,
+        stable_name: str = Field(description="超级表名称"),
+        filter_conditions: str = Field(description="过滤条件，如：field1='value1' AND field2>100"),
+        start_time: Optional[str] = Field(None, description="开始时间过滤"),
+        end_time: Optional[str] = Field(None, description="结束时间过滤"),
+        db_name: Optional[str] = Field(None, description="数据库名称"),
+        limit: int = Field(100, description="返回记录数限制"),
+    ) -> TaosSqlResponse:
+        """根据指定条件筛选数据。
+        
+        Args:
+            stable_name: 超级表名称
+            filter_conditions: 筛选条件表达式
+            start_time: 时间过滤开始
+            end_time: 时间过滤结束
+            db_name: 数据库名称
+            limit: 结果限制数量
+            
+        Returns:
+            TaosSqlResponse: 符合条件的数据记录。
+        """
+        taos = ctx.request_context.lifespan_context.client
+        if db_name is None or db_name == "":
+            db_name = taos.database
+
+        # 构建WHERE条件
+        conditions = []
+        if start_time:
+            conditions.append(f"ts >= '{start_time}'")
+        if end_time:
+            conditions.append(f"ts <= '{end_time}'")
+        conditions.append(filter_conditions)
+
+        where_clause = " AND ".join(conditions)
+        
+        sql = f"SELECT * FROM {db_name}.{stable_name} WHERE {where_clause} ORDER BY ts DESC LIMIT {limit};"
+        
+        result = taos.execute_sql(sql)
+        return result
+
+    @mcp.tool(name="analyze_time_series_trend")
+    def analyze_time_series_trend(
+        ctx: Context,
+        stable_name: str = Field(description="超级表名称"),
+        metric_field: str = Field(description="要分析趋势的指标字段"),
+        time_interval: str = Field(description="时间聚合间隔，如：1h, 10m, 1d"),
+        start_time: str = Field(description="分析开始时间"),
+        end_time: str = Field(description="分析结束时间"),
+        db_name: Optional[str] = Field(None, description="数据库名称"),
+        group_by_tag: Optional[str] = Field(None, description="按标签分组"),
+    ) -> TaosSqlResponse:
+        """分析时序数据的趋势变化。
+        
+        Args:
+            stable_name: 超级表名称
+            metric_field: 分析的指标字段
+            time_interval: 时间聚合间隔
+            start_time: 开始时间
+            end_time: 结束时间
+            db_name: 数据库名称
+            group_by_tag: 分组标签
+            
+        Returns:
+            TaosSqlResponse: 时序趋势分析结果。
+        """
+        taos = ctx.request_context.lifespan_context.client
+        if db_name is None or db_name == "":
+            db_name = taos.database
+
+        # 构建时序聚合查询
+        select_fields = ["_wstart as time_window", f"AVG({metric_field}) as avg_value"]
+        
+        if group_by_tag:
+            select_fields.insert(1, group_by_tag)
+            partition_clause = f"PARTITION BY {group_by_tag}"
+        else:
+            partition_clause = ""
+
+        sql = f"""
+        SELECT {', '.join(select_fields)}
+        FROM {db_name}.{stable_name} 
+        WHERE ts >= '{start_time}' AND ts <= '{end_time}'
+        {partition_clause}
+        INTERVAL({time_interval})
+        ORDER BY time_window;
+        """
+        
+        result = taos.execute_sql(sql)
+        return result
+
+    @mcp.tool(name="calculate_geo_distance")
+    def calculate_geo_distance(
+        ctx: Context,
+        stable_name: str = Field(description="超级表名称"),
+        lat1_field: str = Field(description="第一个纬度字段名"),
+        lon1_field: str = Field(description="第一个经度字段名"),
+        lat2_field: str = Field(description="第二个纬度字段名"),
+        lon2_field: str = Field(description="第二个经度字段名"),
+        distance_threshold: Optional[float] = Field(None, description="距离阈值（米），超过此值的记录将被标记"),
+        start_time: Optional[str] = Field(None, description="开始时间过滤"),
+        end_time: Optional[str] = Field(None, description="结束时间过滤"),
+        db_name: Optional[str] = Field(None, description="数据库名称"),
+        limit: int = Field(100, description="返回记录数限制"),
+    ) -> TaosSqlResponse:
+        """计算两点间的地理距离。
+        
+        Args:
+            stable_name: 超级表名称
+            lat1_field: 第一点纬度字段
+            lon1_field: 第一点经度字段
+            lat2_field: 第二点纬度字段
+            lon2_field: 第二点经度字段
+            distance_threshold: 距离阈值
+            start_time: 时间过滤开始
+            end_time: 时间过滤结束
+            db_name: 数据库名称
+            limit: 结果限制数量
+            
+        Returns:
+            TaosSqlResponse: 包含距离计算结果的数据。
+        """
+        taos = ctx.request_context.lifespan_context.client
+        if db_name is None or db_name == "":
+            db_name = taos.database
+
+        # 构建时间条件
+        time_condition = ""
+        if start_time and end_time:
+            time_condition = f"WHERE ts >= '{start_time}' AND ts <= '{end_time}'"
+        elif start_time:
+            time_condition = f"WHERE ts >= '{start_time}'"
+        elif end_time:
+            time_condition = f"WHERE ts <= '{end_time}'"
+
+        # 使用Haversine公式计算地理距离（以米为单位）
+        distance_formula = f"""
+        6371000 * 2 * ASIN(SQRT(
+            POWER(SIN(({lat2_field} - {lat1_field}) * PI() / 180 / 2), 2) +
+            COS({lat1_field} * PI() / 180) * COS({lat2_field} * PI() / 180) *
+            POWER(SIN(({lon2_field} - {lon1_field}) * PI() / 180 / 2), 2)
+        )) as distance_meters
+        """
+
+        # 添加距离阈值过滤
+        additional_condition = ""
+        if distance_threshold is not None:
+            if time_condition:
+                additional_condition = f" AND ({distance_formula.split(' as distance_meters')[0]}) > {distance_threshold}"
+            else:
+                additional_condition = f"WHERE ({distance_formula.split(' as distance_meters')[0]}) > {distance_threshold}"
+
+        sql = f"""
+        SELECT *, {distance_formula}
+        FROM {db_name}.{stable_name} 
+        {time_condition}{additional_condition}
+        ORDER BY ts DESC 
+        LIMIT {limit};
+        """
+        
+        result = taos.execute_sql(sql)
+        return result
+
+    @mcp.tool(name="get_latest_records")
+    def get_latest_records(
+        ctx: Context,
+        stable_name: str = Field(description="超级表名称"),
+        device_filter: Optional[str] = Field(None, description="设备过滤条件，如：dev_id='ABC123'"),
+        db_name: Optional[str] = Field(None, description="数据库名称"),
+        limit: int = Field(10, description="返回最新记录数量"),
+    ) -> TaosSqlResponse:
+        """获取最新的数据记录。
+        
+        Args:
+            stable_name: 超级表名称
+            device_filter: 设备过滤条件
+            db_name: 数据库名称
+            limit: 返回记录数量
+            
+        Returns:
+            TaosSqlResponse: 最新的数据记录。
+        """
+        taos = ctx.request_context.lifespan_context.client
+        if db_name is None or db_name == "":
+            db_name = taos.database
+
+        where_clause = ""
+        if device_filter:
+            where_clause = f"WHERE {device_filter}"
+
+        sql = f"SELECT * FROM {db_name}.{stable_name} {where_clause} ORDER BY ts DESC LIMIT {limit};"
+        
         result = taos.execute_sql(sql)
         return result
 
     @mcp.tool(name="get_data_by_time_range")
     def get_data_by_time_range(
         ctx: Context,
-        db_name: Optional[str] = Field(
-            None,
-            description="The name of the database. Default is None which means the configured database.",
-        ),
-        stable_name: Optional[str] = Field(
-            None,
-            description="The name of the stable.",
-        ),
-        table_name: Optional[str] = Field(
-            None,
-            description="The name of the table.",
-        ),
-        start_time: str = Field(
-            description="Start time in format 'YYYY-MM-DD HH:MM:SS' or 'YYYY-MM-DD'",
-        ),
-        end_time: str = Field(
-            description="End time in format 'YYYY-MM-DD HH:MM:SS' or 'YYYY-MM-DD'",
-        ),
-        limit: Optional[int] = Field(
-            None,
-            description="Maximum number of records to retrieve. Default is None (no limit).",
-        ),
+        stable_name: str = Field(description="超级表名称"),
+        start_time: str = Field(description="开始时间，格式：YYYY-MM-DD HH:MM:SS"),
+        end_time: str = Field(description="结束时间，格式：YYYY-MM-DD HH:MM:SS"),
+        device_filter: Optional[str] = Field(None, description="设备过滤条件"),
+        db_name: Optional[str] = Field(None, description="数据库名称"),
+        limit: int = Field(1000, description="返回记录数限制"),
     ) -> TaosSqlResponse:
-        """Get data within a specific time range.
-
+        """按时间范围查询数据。
+        
         Args:
-            db_name (Optional[str]): The name of the database. Defaults to None.
-            stable_name (Optional[str]): The name of the stable. Defaults to None.
-            table_name (Optional[str]): The name of the table. Defaults to None.
-            start_time (str): Start time in format 'YYYY-MM-DD HH:MM:SS' or 'YYYY-MM-DD'.
-            end_time (str): End time in format 'YYYY-MM-DD HH:MM:SS' or 'YYYY-MM-DD'.
-            limit (Optional[int]): Maximum number of records to retrieve. Default is None.
-
+            stable_name: 超级表名称
+            start_time: 查询开始时间
+            end_time: 查询结束时间
+            device_filter: 设备过滤条件
+            db_name: 数据库名称
+            limit: 结果限制数量
+            
         Returns:
-            TaosSqlResponse: Data within the specified time range.
+            TaosSqlResponse: 指定时间范围内的数据。
         """
-
         taos = ctx.request_context.lifespan_context.client
         if db_name is None or db_name == "":
             db_name = taos.database
 
-        if table_name:
-            target = f"{db_name}.{table_name}"
-        elif stable_name:
-            target = f"{db_name}.{stable_name}"
-        else:
-            raise ValueError("Either stable_name or table_name must be specified")
+        conditions = [f"ts >= '{start_time}'", f"ts <= '{end_time}'"]
+        if device_filter:
+            conditions.append(device_filter)
 
-        sql = f"SELECT * FROM {target} WHERE ts >= '{start_time}' AND ts <= '{end_time}' ORDER BY ts"
-        if limit:
-            sql += f" LIMIT {limit}"
-        sql += ";"
+        where_clause = "WHERE " + " AND ".join(conditions)
 
+        sql = f"SELECT * FROM {db_name}.{stable_name} {where_clause} ORDER BY ts LIMIT {limit};"
+        
         result = taos.execute_sql(sql)
         return result
 
-    @mcp.tool(name="aggregate_query")
-    def aggregate_query(
+    @mcp.tool(name="detect_anomalies")
+    def detect_anomalies(
         ctx: Context,
-        db_name: Optional[str] = Field(
-            None,
-            description="The name of the database. Default is None which means the configured database.",
-        ),
-        stable_name: Optional[str] = Field(
-            None,
-            description="The name of the stable.",
-        ),
-        table_name: Optional[str] = Field(
-            None,
-            description="The name of the table.",
-        ),
-        agg_function: str = Field(
-            description="Aggregation function: avg, sum, count, max, min, first, last, etc.",
-        ),
-        column_name: str = Field(
-            description="The column name to apply aggregation function.",
-        ),
-        interval: Optional[str] = Field(
-            None,
-            description="Time interval for aggregation (e.g., '1h', '10m', '1d'). Default is None.",
-        ),
-        group_by_tags: Optional[List[str]] = Field(
-            None,
-            description="List of tag names to group by. Default is None.",
-        ),
-        start_time: Optional[str] = Field(
-            None,
-            description="Start time filter in format 'YYYY-MM-DD HH:MM:SS' or 'YYYY-MM-DD'",
-        ),
-        end_time: Optional[str] = Field(
-            None,
-            description="End time filter in format 'YYYY-MM-DD HH:MM:SS' or 'YYYY-MM-DD'",
-        ),
+        stable_name: str = Field(description="超级表名称"),
+        anomaly_conditions: str = Field(description="异常检测条件，如：field1 IS NULL OR field2 > 1000"),
+        start_time: Optional[str] = Field(None, description="开始时间过滤"),
+        end_time: Optional[str] = Field(None, description="结束时间过滤"),
+        db_name: Optional[str] = Field(None, description="数据库名称"),
+        limit: int = Field(100, description="返回异常记录数限制"),
     ) -> TaosSqlResponse:
-        """Perform aggregation queries on time series data.
-
+        """检测数据中的异常值或违规情况。
+        
         Args:
-            db_name (Optional[str]): The name of the database. Defaults to None.
-            stable_name (Optional[str]): The name of the stable. Defaults to None.
-            table_name (Optional[str]): The name of the table. Defaults to None.
-            agg_function (str): Aggregation function to apply.
-            column_name (str): The column name to apply aggregation function.
-            interval (Optional[str]): Time interval for aggregation. Defaults to None.
-            group_by_tags (Optional[List[str]]): List of tag names to group by. Defaults to None.
-            start_time (Optional[str]): Start time filter. Defaults to None.
-            end_time (Optional[str]): End time filter. Defaults to None.
-
+            stable_name: 超级表名称
+            anomaly_conditions: 异常检测条件表达式
+            start_time: 时间过滤开始
+            end_time: 时间过滤结束
+            db_name: 数据库名称
+            limit: 异常记录限制数量
+            
         Returns:
-            TaosSqlResponse: Aggregated query results.
+            TaosSqlResponse: 检测到的异常数据记录。
         """
-
         taos = ctx.request_context.lifespan_context.client
         if db_name is None or db_name == "":
             db_name = taos.database
 
-        if table_name:
-            target = f"{db_name}.{table_name}"
-        elif stable_name:
-            target = f"{db_name}.{stable_name}"
-        else:
-            raise ValueError("Either stable_name or table_name must be specified")
-
-        # Build SELECT clause
-        select_clause = f"{agg_function.upper()}({column_name})"
-        if interval:
-            select_clause = f"_wstart, {select_clause}"
-
-        # Build FROM clause
-        from_clause = target
-
-        # Build WHERE clause
-        where_conditions = []
+        conditions = [anomaly_conditions]
         if start_time:
-            where_conditions.append(f"ts >= '{start_time}'")
+            conditions.append(f"ts >= '{start_time}'")
         if end_time:
-            where_conditions.append(f"ts <= '{end_time}'")
+            conditions.append(f"ts <= '{end_time}'")
 
-        where_clause = ""
-        if where_conditions:
-            where_clause = " WHERE " + " AND ".join(where_conditions)
+        where_clause = "WHERE " + " AND ".join(conditions)
 
-        # Build GROUP BY clause
-        group_by_clause = ""
-        if interval:
-            group_by_clause = f" INTERVAL({interval})"
-        if group_by_tags:
-            partition_by = ", ".join(group_by_tags)
-            group_by_clause = f" PARTITION BY {partition_by}" + group_by_clause
-
-        sql = f"SELECT {select_clause} FROM {from_clause}{where_clause}{group_by_clause};"
+        sql = f"SELECT * FROM {db_name}.{stable_name} {where_clause} ORDER BY ts DESC LIMIT {limit};"
+        
         result = taos.execute_sql(sql)
         return result
 
-    @mcp.tool(name="get_tag_values")
-    def get_tag_values(
+    @mcp.tool(name="cross_table_lookup")
+    def cross_table_lookup(
         ctx: Context,
-        db_name: Optional[str] = Field(
-            None,
-            description="The name of the database. Default is None which means the configured database.",
-        ),
-        stable_name: str = Field(description="The name of the stable"),
-        tag_name: str = Field(description="The name of the tag"),
-        limit: Optional[int] = Field(
-            100,
-            description="Maximum number of unique tag values to retrieve. Default is 100.",
-        ),
-    ) -> TaosSqlResponse:
-        """Get distinct values for a specific tag in a stable.
-
+        source_stable: str = Field(description="源超级表名称"),
+        target_stable: str = Field(description="目标超级表名称"),
+        lookup_field: str = Field(description="关联查找的字段名"),
+        lookup_value: str = Field(description="要查找的值"),
+        time_tolerance_minutes: int = Field(5, description="时间容忍度（分钟）"),
+        db_name: Optional[str] = Field(None, description="数据库名称"),
+        limit: int = Field(50, description="返回记录数限制"),
+    ) -> Dict[str, TaosSqlResponse]:
+        """跨表关联查询验证，用于多源数据核实。
+        
         Args:
-            db_name (Optional[str]): The name of the database. Defaults to None.
-            stable_name (str): The name of the stable.
-            tag_name (str): The name of the tag.
-            limit (Optional[int]): Maximum number of unique tag values. Default is 100.
-
+            source_stable: 源数据表名
+            target_stable: 目标验证表名
+            lookup_field: 关联字段名
+            lookup_value: 查找值
+            time_tolerance_minutes: 时间容忍度
+            db_name: 数据库名称
+            limit: 结果限制数量
+            
         Returns:
-            TaosSqlResponse: Distinct tag values.
+            Dict[str, TaosSqlResponse]: 包含源表和目标表查询结果的字典。
         """
-
-        taos = ctx.request_context.lifespan_context.client
-        if db_name is None or db_name == "":
-            db_name = taos.database
-
-        sql = f"SELECT DISTINCT {tag_name} FROM {db_name}.{stable_name}"
-        if limit:
-            sql += f" LIMIT {limit}"
-        sql += ";"
-
-        result = taos.execute_sql(sql)
-        return result
-
-    @mcp.tool(name="get_db_info")
-    def get_db_info(
-        ctx: Context,
-        db_name: Optional[str] = Field(
-            None,
-            description="The name of the database. Default is None which means the configured database.",
-        ),
-    ) -> TaosSqlResponse:
-        """Get detailed information about a database including configuration and statistics.
-
-        Args:
-            db_name (Optional[str]): The name of the database. Defaults to None.
-
-        Returns:
-            TaosSqlResponse: Database information and statistics.
-        """
-
-        taos = ctx.request_context.lifespan_context.client
-        if db_name is None or db_name == "":
-            db_name = taos.database
-
-        sql = f"SELECT * FROM information_schema.ins_databases WHERE name='{db_name}';"
-        result = taos.execute_sql(sql)
-        return result
-
-    @mcp.tool(name="check_data_integrity")
-    def check_data_integrity(
-        ctx: Context,
-        db_name: Optional[str] = Field(
-            None,
-            description="The name of the database. Default is None which means the configured database.",
-        ),
-        stable_name: str = Field(description="The name of the stable"),
-        check_nulls: bool = Field(
-            True,
-            description="Whether to check for NULL values. Default is True.",
-        ),
-        check_duplicates: bool = Field(
-            False,
-            description="Whether to check for duplicate timestamps. Default is False.",
-        ),
-    ) -> Dict[str, Any]:
-        """Check data integrity for a stable including NULL values and duplicate timestamps.
-
-        Args:
-            db_name (Optional[str]): The name of the database. Defaults to None.
-            stable_name (str): The name of the stable.
-            check_nulls (bool): Whether to check for NULL values. Default is True.
-            check_duplicates (bool): Whether to check for duplicate timestamps. Default is False.
-
-        Returns:
-            Dict[str, Any]: Data integrity check results.
-        """
-
         taos = ctx.request_context.lifespan_context.client
         if db_name is None or db_name == "":
             db_name = taos.database
 
         results = {}
 
-        # Get total row count
-        total_count_sql = f"SELECT COUNT(*) as total_rows FROM {db_name}.{stable_name};"
-        total_result = taos.execute_sql(total_count_sql)
-        results["total_rows"] = total_result["data"][0][0] if total_result["data"] else 0
+        # 首先从源表查询
+        source_sql = f"SELECT * FROM {db_name}.{source_stable} WHERE {lookup_field} = '{lookup_value}' ORDER BY ts DESC LIMIT {limit};"
+        source_result = taos.execute_sql(source_sql)
+        results["source_table"] = source_result
 
-        if check_nulls:
-            # Get column information to check for NULLs
-            describe_sql = f"DESCRIBE {db_name}.{stable_name};"
-            describe_result = taos.execute_sql(describe_sql)
+        # 如果源表有数据，基于时间范围在目标表中查找
+        if source_result.get("data"):
+            # 获取源表数据的时间范围
+            first_record = source_result["data"][0]
+            # 假设第一列是时间戳
+            base_time = first_record[0]
             
-            null_counts = {}
-            for row in describe_result["data"]:
-                col_name = row[0]
-                if col_name != "ts":  # Skip timestamp column
-                    null_sql = f"SELECT COUNT(*) as null_count FROM {db_name}.{stable_name} WHERE {col_name} IS NULL;"
-                    try:
-                        null_result = taos.execute_sql(null_sql)
-                        null_counts[col_name] = null_result["data"][0][0] if null_result["data"] else 0
-                    except Exception:
-                        null_counts[col_name] = "Unable to check"
-            
-            results["null_counts"] = null_counts
-
-        if check_duplicates:
-            # Check for duplicate timestamps (should not exist in TDengine)
-            dup_sql = f"SELECT ts, COUNT(*) as dup_count FROM {db_name}.{stable_name} GROUP BY ts HAVING COUNT(*) > 1 LIMIT 10;"
-            try:
-                dup_result = taos.execute_sql(dup_sql)
-                results["duplicate_timestamps"] = dup_result["data"]
-            except Exception as e:
-                results["duplicate_timestamps"] = f"Error checking duplicates: {str(e)}"
-
-        return results
-
-    @mcp.tool(name="analyze_performance")
-    def analyze_performance(
-        ctx: Context,
-        db_name: Optional[str] = Field(
-            None,
-            description="The name of the database. Default is None which means the configured database.",
-        ),
-        stable_name: Optional[str] = Field(
-            None,
-            description="The name of the stable to analyze. If None, analyze all stables.",
-        ),
-    ) -> Dict[str, Any]:
-        """Analyze database/stable performance including data distribution and query hints.
-
-        Args:
-            db_name (Optional[str]): The name of the database. Defaults to None.
-            stable_name (Optional[str]): The name of the stable. If None, analyze all stables.
-
-        Returns:
-            Dict[str, Any]: Performance analysis results.
-        """
-
-        taos = ctx.request_context.lifespan_context.client
-        if db_name is None or db_name == "":
-            db_name = taos.database
-
-        results = {}
-
-        if stable_name:
-            # Analyze specific stable
-            # Get time range
-            time_range_sql = f"SELECT MIN(ts) as min_time, MAX(ts) as max_time FROM {db_name}.{stable_name};"
-            time_result = taos.execute_sql(time_range_sql)
-            results["time_range"] = time_result["data"][0] if time_result["data"] else [None, None]
-
-            # Get record count
-            count_sql = f"SELECT COUNT(*) as total_records FROM {db_name}.{stable_name};"
-            count_result = taos.execute_sql(count_sql)
-            results["total_records"] = count_result["data"][0][0] if count_result["data"] else 0
-
-            # Get table count for this stable
-            tables_sql = f"SELECT COUNT(*) as table_count FROM information_schema.ins_tables WHERE stable_name='{stable_name}' AND db_name='{db_name}';"
-            tables_result = taos.execute_sql(tables_sql)
-            results["table_count"] = tables_result["data"][0][0] if tables_result["data"] else 0
-
+            # 构建目标表查询，考虑时间容忍度
+            target_sql = f"""
+            SELECT * FROM {db_name}.{target_stable} 
+            WHERE ts >= '{base_time}' - INTERVAL({time_tolerance_minutes}m)
+            AND ts <= '{base_time}' + INTERVAL({time_tolerance_minutes}m)
+            ORDER BY ts 
+            LIMIT {limit};
+            """
+            target_result = taos.execute_sql(target_sql)
+            results["target_table"] = target_result
         else:
-            # Analyze all stables in database
-            stables_sql = f"SELECT stable_name, COUNT(*) as table_count FROM information_schema.ins_tables WHERE db_name='{db_name}' GROUP BY stable_name;"
-            stables_result = taos.execute_sql(stables_sql)
-            results["stables_summary"] = stables_result["data"] if stables_result["data"] else []
+            results["target_table"] = {"status": "no_data", "data": [], "rows": 0}
 
         return results
 
-    @mcp.tool(name="comprehensive_stable_analysis")
-    def comprehensive_stable_analysis(
+    @mcp.tool(name="query_taos_db_data")
+    def query_taos_db_data(
         ctx: Context,
-        db_name: Optional[str] = Field(
-            None,
-            description="The name of the database. Default is None which means the configured database.",
-        ),
-        stable_name: str = Field(description="The name of the stable to analyze"),
-        include_sample_data: bool = Field(
-            True,
-            description="Whether to include sample data in analysis. Default is True.",
-        ),
-        days_back: Optional[int] = Field(
-            7,
-            description="Number of days back to analyze recent data. Default is 7 days.",
-        ),
-    ) -> Dict[str, Any]:
-        """Perform comprehensive analysis of a stable using multiple tools working together.
+        sql_stmt: str = Field(description="要执行的SQL语句（仅限只读查询）"),
+    ) -> TaosSqlResponse:
+        """执行自定义SQL查询（最后选择）。
         
-        This tool combines multiple MCP tools to provide:
-        - Basic stable information and schema
-        - Data integrity checks
-        - Performance analysis
-        - Recent data sampling
-        - Tag value distribution
-        - Time-based statistics
-
-        Args:
-            db_name (Optional[str]): The name of the database. Defaults to None.
-            stable_name (str): The name of the stable to analyze.
-            include_sample_data (bool): Whether to include sample data. Default is True.
-            days_back (Optional[int]): Number of days back for recent analysis. Default is 7.
-
-        Returns:
-            Dict[str, Any]: Comprehensive analysis results combining multiple tool outputs.
-        """
-
-        taos = ctx.request_context.lifespan_context.client
-        if db_name is None or db_name == "":
-            db_name = taos.database
-
-        analysis_results = {
-            "stable_name": stable_name,
-            "database_name": db_name,
-            "analysis_timestamp": "NOW()",
-        }
-
-        try:
-            # 1. Get stable schema information
-            schema_info = get_field_infos(ctx, db_name, stable_name)
-            analysis_results["schema"] = {
-                "columns": schema_info["data"],
-                "column_count": len(schema_info["data"]) if schema_info["data"] else 0
-            }
-
-            # 2. Get tag information
-            try:
-                tag_info = get_tag_infos(ctx, db_name, stable_name)
-                analysis_results["tags"] = {
-                    "tag_columns": tag_info["data"],
-                    "tag_count": len(tag_info["data"]) if tag_info["data"] else 0
-                }
-            except Exception as e:
-                analysis_results["tags"] = {"error": f"Could not retrieve tag info: {str(e)}"}
-
-            # 3. Get performance analysis
-            performance = analyze_performance(ctx, db_name, stable_name)
-            analysis_results["performance"] = performance
-
-            # 4. Get table statistics
-            stats = get_table_stats(ctx, db_name, stable_name, None)
-            analysis_results["statistics"] = stats
-
-            # 5. Data integrity check
-            integrity = check_data_integrity(ctx, db_name, stable_name, True, False)
-            analysis_results["data_integrity"] = integrity
-
-            # 6. Get recent data if requested
-            if include_sample_data:
-                try:
-                    latest_data = get_latest_data(ctx, db_name, stable_name, None, 5)
-                    analysis_results["sample_data"] = {
-                        "latest_records": latest_data["data"],
-                        "sample_count": len(latest_data["data"]) if latest_data["data"] else 0
-                    }
-                except Exception as e:
-                    analysis_results["sample_data"] = {"error": f"Could not retrieve sample data: {str(e)}"}
-
-            # 7. Time range analysis for recent days
-            if days_back and days_back > 0:
-                try:
-                    from datetime import datetime, timedelta
-                    end_time = datetime.now()
-                    start_time = end_time - timedelta(days=days_back)
-                    
-                    start_str = start_time.strftime('%Y-%m-%d %H:%M:%S')
-                    end_str = end_time.strftime('%Y-%m-%d %H:%M:%S')
-                    
-                    recent_count_sql = f"SELECT COUNT(*) as recent_count FROM {db_name}.{stable_name} WHERE ts >= '{start_str}' AND ts <= '{end_str}';"
-                    recent_result = taos.execute_sql(recent_count_sql)
-                    
-                    analysis_results["recent_activity"] = {
-                        "days_analyzed": days_back,
-                        "time_range": f"{start_str} to {end_str}",
-                        "recent_record_count": recent_result["data"][0][0] if recent_result["data"] else 0
-                    }
-                except Exception as e:
-                    analysis_results["recent_activity"] = {"error": f"Could not analyze recent activity: {str(e)}"}
-
-            # 8. Tag value distribution analysis (for first tag column if exists)
-            if "tags" in analysis_results and isinstance(analysis_results["tags"], dict) and analysis_results["tags"].get("tag_columns"):
-                try:
-                    first_tag = analysis_results["tags"]["tag_columns"][0][0]  # Get first tag column name
-                    tag_values = get_tag_values(ctx, db_name, stable_name, first_tag, 20)
-                    analysis_results["tag_distribution"] = {
-                        "tag_name": first_tag,
-                        "unique_values": tag_values["data"],
-                        "unique_count": len(tag_values["data"]) if tag_values["data"] else 0
-                    }
-                except Exception as e:
-                    analysis_results["tag_distribution"] = {"error": f"Could not analyze tag distribution: {str(e)}"}
-
-            analysis_results["analysis_status"] = "completed"
-
-        except Exception as e:
-            analysis_results["analysis_status"] = "failed"
-            analysis_results["error"] = str(e)
-
-        return analysis_results
-
-    @mcp.tool(name="time_series_dashboard_data")
-    def time_series_dashboard_data(
-        ctx: Context,
-        db_name: Optional[str] = Field(
-            None,
-            description="The name of the database. Default is None which means the configured database.",
-        ),
-        stable_name: str = Field(description="The name of the stable"),
-        metric_column: str = Field(description="The column name for the main metric to analyze"),
-        time_range_hours: int = Field(
-            24,
-            description="Number of hours back to analyze. Default is 24 hours.",
-        ),
-        interval_minutes: int = Field(
-            60,
-            description="Aggregation interval in minutes. Default is 60 minutes.",
-        ),
-        group_by_tag: Optional[str] = Field(
-            None,
-            description="Tag column to group results by. Default is None.",
-        ),
-    ) -> Dict[str, Any]:
-        """Generate dashboard-ready time series data using multiple aggregation tools.
+        **重要提示**: 这是一个通用工具，只有在其他专用工具无法满足需求时才使用。
+        所有SQL语句必须是只读的（SELECT查询），不允许修改数据。
         
-        This composite tool provides data suitable for time series dashboards by combining:
-        - Time-based aggregations with intervals
-        - Statistical summaries
-        - Tag-based grouping
-        - Recent trends analysis
-
         Args:
-            db_name (Optional[str]): The name of the database. Defaults to None.
-            stable_name (str): The name of the stable.
-            metric_column (str): The column name for the main metric.
-            time_range_hours (int): Hours back to analyze. Default is 24.
-            interval_minutes (int): Aggregation interval in minutes. Default is 60.
-            group_by_tag (Optional[str]): Tag to group by. Default is None.
-
+            sql_stmt: 要执行的只读SQL语句
+            
         Returns:
-            Dict[str, Any]: Dashboard-ready time series data.
+            TaosSqlResponse: SQL查询结果。
         """
-
         taos = ctx.request_context.lifespan_context.client
-        if db_name is None or db_name == "":
-            db_name = taos.database
-
-        from datetime import datetime, timedelta
-
-        # Calculate time range
-        end_time = datetime.now()
-        start_time = end_time - timedelta(hours=time_range_hours)
-        start_str = start_time.strftime('%Y-%m-%d %H:%M:%S')
-        end_str = end_time.strftime('%Y-%m-%d %H:%M:%S')
-
-        dashboard_data = {
-            "stable_name": stable_name,
-            "metric_column": metric_column,
-            "time_range": f"{start_str} to {end_str}",
-            "interval": f"{interval_minutes}m",
-            "group_by_tag": group_by_tag
-        }
-
-        try:
-            # 1. Get time series data with aggregation
-            group_by_tags = [group_by_tag] if group_by_tag else None
-            
-            # Average values over time
-            avg_data = aggregate_query(
-                ctx, db_name, stable_name, None, "avg", metric_column, 
-                f"{interval_minutes}m", group_by_tags, start_str, end_str
-            )
-            dashboard_data["avg_time_series"] = avg_data
-
-            # Max values over time
-            max_data = aggregate_query(
-                ctx, db_name, stable_name, None, "max", metric_column,
-                f"{interval_minutes}m", group_by_tags, start_str, end_str
-            )
-            dashboard_data["max_time_series"] = max_data
-
-            # Min values over time
-            min_data = aggregate_query(
-                ctx, db_name, stable_name, None, "min", metric_column,
-                f"{interval_minutes}m", group_by_tags, start_str, end_str
-            )
-            dashboard_data["min_time_series"] = min_data
-
-            # 2. Get overall statistics for the time period
-            overall_stats = {}
-            
-            # Overall average
-            overall_avg = aggregate_query(
-                ctx, db_name, stable_name, None, "avg", metric_column,
-                None, group_by_tags, start_str, end_str
-            )
-            overall_stats["average"] = overall_avg
-            
-            # Overall count
-            overall_count = aggregate_query(
-                ctx, db_name, stable_name, None, "count", metric_column,
-                None, group_by_tags, start_str, end_str
-            )
-            overall_stats["count"] = overall_count
-
-            dashboard_data["overall_statistics"] = overall_stats
-
-            # 3. Get latest values for real-time display
-            latest_data = get_latest_data(ctx, db_name, stable_name, None, 1)
-            dashboard_data["latest_value"] = latest_data
-
-            # 4. If grouping by tag, get tag distribution
-            if group_by_tag:
-                tag_values = get_tag_values(ctx, db_name, stable_name, group_by_tag, 50)
-                dashboard_data["tag_distribution"] = tag_values
-
-            dashboard_data["status"] = "success"
-
-        except Exception as e:
-            dashboard_data["status"] = "error"
-            dashboard_data["error"] = str(e)
-
-        return dashboard_data
+        return taos.execute_sql(sql_stmt)
 
 
 def register_resources(mcp: FastMCP):
@@ -1022,15 +876,13 @@ def register_resources(mcp: FastMCP):
 
     @mcp.resource("taos://database", mime_type="text/plain")
     def get_current_taos_database() -> List:
-        """Get current mysql database."""
-
+        """Get current taos database."""
         result = taos.execute_sql("SHOW DATABASES;")
         return result.get("data", [])
 
     @mcp.resource("taos://schemas", mime_type="application/json")
     def get_current_db_all_taos_schema() -> Dict[str, Any]:
         """Provide all schema in the current database."""
-
         schema = {}
         stables = taos.execute_sql("SHOW STABLES;")
 
@@ -1060,7 +912,6 @@ def register_prompts(mcp: FastMCP):
     @mcp.prompt()
     def taos_query() -> str:
         """Query a Taos(涛思) database."""
-
         return get_prompt_template("prompt")
 
     @mcp.prompt()
@@ -1076,7 +927,6 @@ def register_prompts(mcp: FastMCP):
         Returns:
             A list containing a prompt message to explain the query.
         """
-
         logger.debug(f"Entering describe_query_prompt() with query: {query}")
         prompt_text = (
             f"Explain the following SQL query:\n\n{query}\n\n"
