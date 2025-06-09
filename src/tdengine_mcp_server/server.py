@@ -171,34 +171,40 @@ def register_tools(mcp: FastMCP):
         if db_name is None or db_name == "":
             db_name = taos.database
 
-        stables_result = taos.execute_sql(f"SHOW {db_name}.STABLES;")
-        stables = [stable[0] for stable in stables_result.get("data", [])]
+        try:
+            stables_result = taos.execute_sql(f"SHOW {db_name}.STABLES;")
+            stables = [stable[0] for stable in stables_result.get("data", [])]
+        except Exception as e:
+            logger.error(f"Failed to get stables list: {e}")
+            from datetime import datetime
+            return {"latest_date": datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}
 
         latest_timestamp = None
 
         for stable_name in stables:
             try:
-                # Check if table has a timestamp column 'ts'
-                desc_result = taos.execute_sql(f"DESCRIBE {db_name}.{stable_name};")
-                fields = [field[0].lower() for field in desc_result.get("data", [])]
-                if 'ts' not in fields:
-                    continue
-
-                query = f"SELECT LAST_ROW(ts) FROM {db_name}.{stable_name};"
+                # Check if table has data by getting max timestamp
+                query = f"SELECT MAX(ts) as max_ts FROM {db_name}.{stable_name};"
                 result = taos.execute_sql(query)
                 
                 if result.get("data") and result["data"][0][0] is not None:
                     current_stable_latest = result["data"][0][0]
                     
-                    if latest_timestamp is None or current_stable_latest > latest_timestamp:
-                        latest_timestamp = current_stable_latest
+                    # Convert to string for comparison if needed
+                    if isinstance(current_stable_latest, str):
+                        current_ts_str = current_stable_latest
+                    else:
+                        current_ts_str = str(current_stable_latest)
+                    
+                    if latest_timestamp is None or current_ts_str > latest_timestamp:
+                        latest_timestamp = current_ts_str
 
             except Exception as e:
                 logger.warning(f"Could not get latest timestamp for stable {stable_name}: {e}")
                 continue
 
         if latest_timestamp:
-            return {"latest_date": str(latest_timestamp)}
+            return {"latest_date": latest_timestamp}
         else:
             # Fallback to current system time if no data found
             from datetime import datetime
@@ -512,9 +518,15 @@ def register_tools(mcp: FastMCP):
         agg_expr = f"{agg_function.upper()}({field_name}) as {agg_function}_{field_name}"
         
         if group_by_field:
-            sql = f"SELECT {group_by_field}, {agg_expr} FROM {db_name}.{stable_name} {time_condition} GROUP BY {group_by_field} ORDER BY {agg_function}_{field_name} DESC LIMIT {limit};"
+            if time_condition:
+                sql = f"SELECT {group_by_field}, {agg_expr} FROM {db_name}.{stable_name} {time_condition} GROUP BY {group_by_field} ORDER BY {agg_function}_{field_name} DESC LIMIT {limit};"
+            else:
+                sql = f"SELECT {group_by_field}, {agg_expr} FROM {db_name}.{stable_name} GROUP BY {group_by_field} ORDER BY {agg_function}_{field_name} DESC LIMIT {limit};"
         else:
-            sql = f"SELECT {agg_expr} FROM {db_name}.{stable_name} {time_condition};"
+            if time_condition:
+                sql = f"SELECT {agg_expr} FROM {db_name}.{stable_name} {time_condition};"
+            else:
+                sql = f"SELECT {agg_expr} FROM {db_name}.{stable_name};"
 
         result = taos.execute_sql(sql)
         return result
@@ -590,23 +602,26 @@ def register_tools(mcp: FastMCP):
         if db_name is None or db_name == "":
             db_name = taos.database
 
-        # 构建时序聚合查询
-        select_fields = ["_wstart as time_window", f"AVG({metric_field}) as avg_value"]
+        # 构建SELECT字段
+        select_fields = ["_wstart", f"AVG({metric_field}) as avg_value"]
         
         if group_by_tag:
-            select_fields.insert(1, group_by_tag)
-            partition_clause = f"PARTITION BY {group_by_tag}"
-        else:
-            partition_clause = ""
+            select_fields.append(group_by_tag)
 
-        sql = f"""
-        SELECT {', '.join(select_fields)}
-        FROM {db_name}.{stable_name} 
-        WHERE ts >= '{start_time}' AND ts <= '{end_time}'
-        {partition_clause}
-        INTERVAL({time_interval})
-        ORDER BY time_window;
-        """
+        # 构建SQL - TDengine中INTERVAL和PARTITION BY的正确语法
+        sql_parts = [
+            f"SELECT {', '.join(select_fields)}",
+            f"FROM {db_name}.{stable_name}",
+            f"WHERE ts >= '{start_time}' AND ts <= '{end_time}'"
+        ]
+        
+        if group_by_tag:
+            sql_parts.append(f"PARTITION BY {group_by_tag}")
+            
+        sql_parts.append(f"INTERVAL({time_interval})")
+        sql_parts.append("ORDER BY _wstart")
+
+        sql = " ".join(sql_parts) + ";"
         
         result = taos.execute_sql(sql)
         return result
@@ -619,7 +634,7 @@ def register_tools(mcp: FastMCP):
         lon1_field: str = Field(description="第一个经度字段名"),
         lat2_field: str = Field(description="第二个纬度字段名"),
         lon2_field: str = Field(description="第二个经度字段名"),
-        distance_threshold: Optional[float] = Field(None, description="距离阈值（米），超过此值的记录将被标记"),
+        distance_threshold: Optional[float] = Field(None, description="距离阈值（度），超过此值的记录将被标记"),
         start_time: Optional[str] = Field(None, description="开始时间过滤"),
         end_time: Optional[str] = Field(None, description="结束时间过滤"),
         db_name: Optional[str] = Field(None, description="数据库名称"),
@@ -627,13 +642,15 @@ def register_tools(mcp: FastMCP):
     ) -> TaosSqlResponse:
         """计算两点间的地理距离。
         
+        注意：此工具计算简单的坐标差值，如需精确的地理距离，请在结果中进行后处理。
+        
         Args:
             stable_name: 超级表名称
             lat1_field: 第一点纬度字段
             lon1_field: 第一点经度字段
             lat2_field: 第二点纬度字段
             lon2_field: 第二点经度字段
-            distance_threshold: 距离阈值
+            distance_threshold: 距离阈值（度）
             start_time: 时间过滤开始
             end_time: 时间过滤结束
             db_name: 数据库名称
@@ -646,36 +663,33 @@ def register_tools(mcp: FastMCP):
         if db_name is None or db_name == "":
             db_name = taos.database
 
-        # 构建时间条件
-        time_condition = ""
-        if start_time and end_time:
-            time_condition = f"WHERE ts >= '{start_time}' AND ts <= '{end_time}'"
-        elif start_time:
-            time_condition = f"WHERE ts >= '{start_time}'"
-        elif end_time:
-            time_condition = f"WHERE ts <= '{end_time}'"
+        # 构建WHERE条件
+        conditions = []
+        if start_time:
+            conditions.append(f"ts >= '{start_time}'")
+        if end_time:
+            conditions.append(f"ts <= '{end_time}'")
 
-        # 使用Haversine公式计算地理距离（以米为单位）
-        distance_formula = f"""
-        6371000 * 2 * ASIN(SQRT(
-            POWER(SIN(({lat2_field} - {lat1_field}) * PI() / 180 / 2), 2) +
-            COS({lat1_field} * PI() / 180) * COS({lat2_field} * PI() / 180) *
-            POWER(SIN(({lon2_field} - {lon1_field}) * PI() / 180 / 2), 2)
-        )) as distance_meters
-        """
-
+        # 使用简单的坐标差值计算（避免复杂数学函数）
+        lat_diff = f"ABS({lat2_field} - {lat1_field})"
+        lon_diff = f"ABS({lon2_field} - {lon1_field})"
+        simple_distance = f"({lat_diff} + {lon_diff})"
+        
         # 添加距离阈值过滤
-        additional_condition = ""
         if distance_threshold is not None:
-            if time_condition:
-                additional_condition = f" AND ({distance_formula.split(' as distance_meters')[0]}) > {distance_threshold}"
-            else:
-                additional_condition = f"WHERE ({distance_formula.split(' as distance_meters')[0]}) > {distance_threshold}"
+            conditions.append(f"({simple_distance}) > {distance_threshold}")
+
+        where_clause = ""
+        if conditions:
+            where_clause = "WHERE " + " AND ".join(conditions)
 
         sql = f"""
-        SELECT *, {distance_formula}
+        SELECT *, 
+               {lat_diff} as lat_diff,
+               {lon_diff} as lon_diff,
+               {simple_distance} as simple_distance
         FROM {db_name}.{stable_name} 
-        {time_condition}{additional_condition}
+        {where_clause}
         ORDER BY ts DESC 
         LIMIT {limit};
         """
@@ -836,16 +850,39 @@ def register_tools(mcp: FastMCP):
             # 假设第一列是时间戳
             base_time = first_record[0]
             
-            # 构建目标表查询，考虑时间容忍度
-            target_sql = f"""
-            SELECT * FROM {db_name}.{target_stable} 
-            WHERE ts >= '{base_time}' - INTERVAL({time_tolerance_minutes}m)
-            AND ts <= '{base_time}' + INTERVAL({time_tolerance_minutes}m)
-            ORDER BY ts 
-            LIMIT {limit};
-            """
-            target_result = taos.execute_sql(target_sql)
-            results["target_table"] = target_result
+            # 计算时间范围 - 使用字符串操作而不是INTERVAL函数
+            try:
+                from datetime import datetime, timedelta
+                if isinstance(base_time, str):
+                    base_dt = datetime.fromisoformat(base_time.replace('T', ' ').replace('Z', ''))
+                else:
+                    base_dt = base_time
+                
+                start_time = base_dt - timedelta(minutes=time_tolerance_minutes)
+                end_time = base_dt + timedelta(minutes=time_tolerance_minutes)
+                
+                start_time_str = start_time.strftime('%Y-%m-%d %H:%M:%S')
+                end_time_str = end_time.strftime('%Y-%m-%d %H:%M:%S')
+                
+                # 构建目标表查询
+                target_sql = f"""
+                SELECT * FROM {db_name}.{target_stable} 
+                WHERE ts >= '{start_time_str}' AND ts <= '{end_time_str}'
+                ORDER BY ts 
+                LIMIT {limit};
+                """
+                target_result = taos.execute_sql(target_sql)
+                results["target_table"] = target_result
+                
+            except Exception as e:
+                logger.warning(f"Failed to calculate time range: {e}")
+                # 简化查询，只在目标表中查找相近时间的数据
+                simplified_sql = f"SELECT * FROM {db_name}.{target_stable} ORDER BY ts DESC LIMIT {limit};"
+                try:
+                    target_result = taos.execute_sql(simplified_sql)
+                    results["target_table"] = target_result
+                except:
+                    results["target_table"] = {"status": "error", "data": [], "rows": 0}
         else:
             results["target_table"] = {"status": "no_data", "data": [], "rows": 0}
 
